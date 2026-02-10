@@ -1,0 +1,6 @@
+# Non-sensitive configuration only.
+site_url: "https://contoso.sharepoint.com/sites/inventory"
+library_name: "Shared Documents"
+folder_path: "/Reports"
+file_pattern: "*.csv"
+output_file: "inventory_summary.csv"
