@@ -4,8 +4,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import pandas as pd
+from openpyxl import load_workbook
 
-from inventory_aggregator import aggregate_inventory_by_sn
+from inventory_aggregator import aggregate_inventory_by_sn, write_serial_history_workbook
 
 
 class TestInventoryAggregator(unittest.TestCase):
@@ -69,6 +70,55 @@ class TestInventoryAggregator(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "Column C header must be 'SN'"):
                 aggregate_inventory_by_sn([(bad_snapshot, date(2024, 3, 1))])
+
+    def test_write_serial_history_workbook_exports_excel_dates_and_formatting(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            snap_1 = temp_path / "2024-01-01_Raw_Data.xlsx"
+            snap_2 = temp_path / "2024-02-01_Raw_Data.xlsx"
+            output = temp_path / "compiled_inventory_serial_history.xlsx"
+
+            self._write_snapshot(
+                snap_1,
+                [["A1", "B1", "SN1", "D1", "E1", "F1", "G1"]],
+            )
+            self._write_snapshot(
+                snap_2,
+                [["A1-NEW", "B1-NEW", "SN1", "D1-NEW", "E1-NEW", "F1-NEW", "G1-NEW"]],
+            )
+
+            write_serial_history_workbook(
+                [
+                    (snap_1, date(2024, 1, 1)),
+                    (snap_2, date(2024, 2, 1)),
+                ],
+                output_path=output,
+                include_run_log=True,
+            )
+
+            workbook = load_workbook(output)
+            self.assertIn("Serial_History", workbook.sheetnames)
+            self.assertIn("Run_Log", workbook.sheetnames)
+
+            serial_ws = workbook["Serial_History"]
+            run_log_ws = workbook["Run_Log"]
+
+            self.assertEqual(serial_ws.freeze_panes, "A2")
+            self.assertIsNotNone(serial_ws.auto_filter.ref)
+            self.assertEqual(run_log_ws.freeze_panes, "A2")
+            self.assertIsNotNone(run_log_ws.auto_filter.ref)
+
+            first_seen_cell = serial_ws.cell(row=2, column=2)
+            last_seen_cell = serial_ws.cell(row=2, column=3)
+            run_log_date_cell = run_log_ws.cell(row=2, column=2)
+
+            self.assertEqual(first_seen_cell.number_format, "yyyy-mm-dd")
+            self.assertEqual(last_seen_cell.number_format, "yyyy-mm-dd")
+            self.assertEqual(run_log_date_cell.number_format, "yyyy-mm-dd")
+
+            self.assertEqual(first_seen_cell.value.date(), date(2024, 1, 1))
+            self.assertEqual(last_seen_cell.value.date(), date(2024, 2, 1))
+            self.assertEqual(run_log_date_cell.value.date(), date(2024, 1, 1))
 
 
 if __name__ == "__main__":
