@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import re
 from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
@@ -10,7 +12,37 @@ from openpyxl.styles import Font
 from openpyxl.worksheet.worksheet import Worksheet
 
 
-def aggregate_inventory_by_sn(file_dates: Sequence[tuple[str | Path, date]]) -> pd.DataFrame:
+LOGGER = logging.getLogger(__name__)
+SNAPSHOT_FILENAME_REGEX = re.compile(r"^(\d{4}-\d{2}-\d{2})_Raw_Data\.xlsx$")
+
+
+def _validate_snapshot_filename(path: Path, snapshot_date: date) -> None:
+    match = SNAPSHOT_FILENAME_REGEX.match(path.name)
+    if not match:
+        raise ValueError(
+            f"Malformed snapshot filename '{path.name}'. Expected 'YYYY-MM-DD_Raw_Data.xlsx'."
+        )
+
+    filename_date = date.fromisoformat(match.group(1))
+    if filename_date != snapshot_date:
+        raise ValueError(
+            f"Snapshot filename date {filename_date.isoformat()} does not match provided "
+            f"date {snapshot_date.isoformat()} for '{path.name}'."
+        )
+
+
+def _read_snapshot_frame(workbook_path: Path) -> pd.DataFrame:
+    try:
+        return pd.read_excel(workbook_path, engine="openpyxl")
+    except Exception as exc:
+        raise ValueError(f"Unreadable workbook '{workbook_path}': {exc}") from exc
+
+
+def aggregate_inventory_by_sn(
+    file_dates: Sequence[tuple[str | Path, date]],
+    *,
+    skip_invalid_files: bool = False,
+) -> pd.DataFrame:
     """Aggregate inventory rows by serial number (SN) across dated Excel snapshots.
 
     Each input workbook is read with pandas/openpyxl. Column C's header must be exactly
@@ -23,12 +55,24 @@ def aggregate_inventory_by_sn(file_dates: Sequence[tuple[str | Path, date]]) -> 
 
     by_sn: dict[str, dict[str, Any]] = {}
 
+    discovered_count = len(file_dates)
+    processed_count = 0
+
     for file_path, snapshot_date in sorted(file_dates, key=lambda item: item[1]):
         workbook_path = Path(file_path)
-        frame = pd.read_excel(workbook_path, engine="openpyxl")
+        try:
+            _validate_snapshot_filename(workbook_path, snapshot_date)
+            frame = _read_snapshot_frame(workbook_path)
+        except ValueError as exc:
+            if skip_invalid_files:
+                LOGGER.warning("Skipping file: %s", exc)
+                continue
+            raise
 
-        if frame.shape[1] < 3:
-            raise ValueError(f"{workbook_path} must contain at least 3 columns (A-C)")
+        processed_count += 1
+
+        if frame.shape[1] < 7:
+            raise ValueError(f"{workbook_path} must contain required columns A-G")
 
         if frame.columns[2] != "SN":
             raise ValueError(
@@ -77,6 +121,10 @@ def aggregate_inventory_by_sn(file_dates: Sequence[tuple[str | Path, date]]) -> 
             entry["last_col_e"] = ag_values[4]
             entry["last_col_f"] = ag_values[5]
             entry["last_col_g"] = ag_values[6]
+
+    LOGGER.info("Files discovered: %d", discovered_count)
+    LOGGER.info("Files processed: %d", processed_count)
+    LOGGER.info("Unique SNs: %d", len(by_sn))
 
     output_columns = [
         "sn",
@@ -150,5 +198,7 @@ def write_serial_history_workbook(
             run_log_ws = writer.sheets["Run_Log"]
             # snapshot_date column
             _format_sheet(run_log_ws, date_columns=(2,))
+
+    LOGGER.info("Output file: %s", output.resolve())
 
     return output
