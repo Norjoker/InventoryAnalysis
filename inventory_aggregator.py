@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from openpyxl.styles import Font
+from openpyxl.worksheet.worksheet import Worksheet
 
 
 def aggregate_inventory_by_sn(file_dates: Sequence[tuple[str | Path, date]]) -> pd.DataFrame:
@@ -99,3 +101,54 @@ def aggregate_inventory_by_sn(file_dates: Sequence[tuple[str | Path, date]]) -> 
     return pd.DataFrame(by_sn.values(), columns=output_columns).sort_values(
         by="sn", kind="stable"
     ).reset_index(drop=True)
+
+
+def _format_sheet(
+    worksheet: Worksheet,
+    *,
+    date_columns: Sequence[int],
+    header_row: int = 1,
+) -> None:
+    """Apply lightweight workbook formatting for human-readable output."""
+    worksheet.freeze_panes = "A2"
+    worksheet.auto_filter.ref = worksheet.dimensions
+
+    for cell in worksheet[header_row]:
+        cell.font = Font(bold=True)
+
+    for row_idx in range(header_row + 1, worksheet.max_row + 1):
+        for column_idx in date_columns:
+            worksheet.cell(row=row_idx, column=column_idx).number_format = "yyyy-mm-dd"
+
+
+def write_serial_history_workbook(
+    file_dates: Sequence[tuple[str | Path, date]],
+    output_path: str | Path = "compiled_inventory_serial_history.xlsx",
+    include_run_log: bool = True,
+) -> Path:
+    """Write aggregated inventory serial history to an Excel workbook."""
+    output = Path(output_path)
+    serial_history = aggregate_inventory_by_sn(file_dates)
+    run_log = pd.DataFrame(
+        [
+            {
+                "filename": Path(file_path).name,
+                "snapshot_date": snapshot_date,
+            }
+            for file_path, snapshot_date in sorted(file_dates, key=lambda item: item[1])
+        ]
+    )
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        serial_history.to_excel(writer, sheet_name="Serial_History", index=False)
+        serial_ws = writer.sheets["Serial_History"]
+        # first_seen and last_seen columns
+        _format_sheet(serial_ws, date_columns=(2, 3))
+
+        if include_run_log:
+            run_log.to_excel(writer, sheet_name="Run_Log", index=False)
+            run_log_ws = writer.sheets["Run_Log"]
+            # snapshot_date column
+            _format_sheet(run_log_ws, date_columns=(2,))
+
+    return output
