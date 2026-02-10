@@ -71,6 +71,68 @@ class TestInventoryAggregator(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Column C header must be 'SN'"):
                 aggregate_inventory_by_sn([(bad_snapshot, date(2024, 3, 1))])
 
+    def test_aggregate_inventory_requires_columns_a_to_g(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            bad_snapshot = temp_path / "2024-03-01_Raw_Data.xlsx"
+            bad_frame = pd.DataFrame(
+                [[1, 2, "SN1", 4, 5, 6]],
+                columns=["A", "B", "SN", "D", "E", "F"],
+            )
+            bad_frame.to_excel(bad_snapshot, index=False, engine="openpyxl")
+
+            with self.assertRaisesRegex(ValueError, "required columns A-G"):
+                aggregate_inventory_by_sn([(bad_snapshot, date(2024, 3, 1))])
+
+    def test_aggregate_inventory_uses_last_duplicate_row_in_same_snapshot(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            snapshot = temp_path / "2024-03-01_Raw_Data.xlsx"
+            self._write_snapshot(
+                snapshot,
+                [
+                    ["A1", "B1", "SN1", "D1", "E1", "F1", "G1"],
+                    ["A1-LAST", "B1-LAST", "SN1", "D1-LAST", "E1-LAST", "F1-LAST", "G1-LAST"],
+                ],
+            )
+
+            result = aggregate_inventory_by_sn([(snapshot, date(2024, 3, 1))])
+            sn1 = result[result["sn"] == "SN1"].iloc[0]
+
+            self.assertEqual(sn1["first_col_a"], "A1")
+            self.assertEqual(sn1["last_col_a"], "A1-LAST")
+
+    def test_aggregate_inventory_can_skip_malformed_or_unreadable_files(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            good_snapshot = temp_path / "2024-03-01_Raw_Data.xlsx"
+            malformed_name = temp_path / "bad_name.xlsx"
+            unreadable = temp_path / "2024-03-03_Raw_Data.xlsx"
+
+            self._write_snapshot(good_snapshot, [["A1", "B1", "SN1", "D1", "E1", "F1", "G1"]])
+            self._write_snapshot(malformed_name, [["A2", "B2", "SN2", "D2", "E2", "F2", "G2"]])
+            unreadable.write_text("not an xlsx", encoding="utf-8")
+
+            result = aggregate_inventory_by_sn(
+                [
+                    (good_snapshot, date(2024, 3, 1)),
+                    (malformed_name, date(2024, 3, 2)),
+                    (unreadable, date(2024, 3, 3)),
+                ],
+                skip_invalid_files=True,
+            )
+
+            self.assertEqual(set(result["sn"].tolist()), {"SN1"})
+
+    def test_aggregate_inventory_fails_with_clear_error_for_bad_file(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            malformed_name = temp_path / "bad_name.xlsx"
+            self._write_snapshot(malformed_name, [["A2", "B2", "SN2", "D2", "E2", "F2", "G2"]])
+
+            with self.assertRaisesRegex(ValueError, "Malformed snapshot filename"):
+                aggregate_inventory_by_sn([(malformed_name, date(2024, 3, 2))])
+
     def test_write_serial_history_workbook_exports_excel_dates_and_formatting(self) -> None:
         with TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
