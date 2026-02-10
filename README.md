@@ -19,7 +19,7 @@ pip install -r requirements.txt
 site_url: "https://contoso.sharepoint.com/sites/inventory"
 library_name: "Shared Documents"
 folder_path: "/Reports"
-file_pattern: "*.csv"
+file_pattern: "^(\d{4}-\d{2}-\d{2})_Raw_Data\.xlsx$"
 output_file: "inventory_summary.csv"
 ```
 
@@ -111,3 +111,15 @@ If you only need a narrower surface area, you may use more restrictive permissio
 - Do not commit certificate private keys, passphrases, or token cache files.
 - Prefer storing secrets in a secret manager (Key Vault, CI secret store, etc.).
 - Use separate app registrations and least privilege for automation vs. interactive usage.
+
+## SharePoint snapshot discovery
+
+The `graph_client.py` module uses Microsoft Graph to:
+
+1. Resolve the SharePoint site id from `site_url`.
+2. Resolve the document library drive id from `library_name`.
+3. List files in `folder_path`.
+4. Filter filenames by regex (for example `^(\d{4}-\d{2}-\d{2})_Raw_Data\.xlsx$`).
+5. Parse the captured date (`YYYY-MM-DD`) into a Python `date` object and sort snapshots chronologically before processing.
+
+`main.py` now calls this workflow and processes snapshots in ascending date order.

@@ -6,6 +6,7 @@ from typing import Any
 import yaml
 
 from auth import DEFAULT_DELEGATED_SCOPES, DEFAULT_GRAPH_SCOPE, build_provider_from_env
+from graph_client import GraphClient
 
 
 REQUIRED_CONFIG_FIELDS = (
@@ -65,16 +66,23 @@ def load_confidential_flow_settings() -> dict[str, Any]:
 
 
 def run(config: dict[str, Any], token: str, auth_mode: str) -> None:
-    """Primary script workflow.
-
-    Replace this implementation with your inventory logic.
-    """
-    print("Loaded configuration:")
-    for key in REQUIRED_CONFIG_FIELDS:
-        print(f"- {key}: {config[key]}")
+    """Primary script workflow."""
+    client = GraphClient(access_token=token)
+    snapshots = client.list_snapshot_files(
+        site_url=config["site_url"],
+        library_name=config["library_name"],
+        folder_path=config["folder_path"],
+        filename_pattern=config["file_pattern"],
+    )
 
     print(f"Authentication mode: {auth_mode}")
-    print(f"Access token acquired (first 16 chars): {token[:16]}...")
+    print(f"Found {len(snapshots)} snapshot files matching pattern.")
+    for snapshot in snapshots:
+        print(f"- {snapshot.snapshot_date.isoformat()} :: {snapshot.name}")
+
+    # Continue downstream processing in chronological order
+    for snapshot in snapshots:
+        print(f"Processing snapshot: {snapshot.name}")
 
 
 if __name__ == "__main__":
