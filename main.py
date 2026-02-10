@@ -5,6 +5,8 @@ from typing import Any
 
 import yaml
 
+from auth import DEFAULT_DELEGATED_SCOPES, DEFAULT_GRAPH_SCOPE, build_provider_from_env
+
 
 REQUIRED_CONFIG_FIELDS = (
     "site_url",
@@ -12,13 +14,6 @@ REQUIRED_CONFIG_FIELDS = (
     "folder_path",
     "file_pattern",
     "output_file",
-)
-
-REQUIRED_ENV_VARS = (
-    "CLIENT_ID",
-    "TENANT_ID",
-    "CERTIFICATE_PATH",
-    "CERTIFICATE_SECRET",
 )
 
 
@@ -35,24 +30,41 @@ def load_config(config_path: str) -> dict[str, Any]:
 
     missing = [field for field in REQUIRED_CONFIG_FIELDS if not data.get(field)]
     if missing:
-        raise ValueError(
-            "Missing required config fields: " + ", ".join(missing)
-        )
+        raise ValueError("Missing required config fields: " + ", ".join(missing))
 
     return data
 
 
-def load_sensitive_settings() -> dict[str, str]:
-    missing = [name for name in REQUIRED_ENV_VARS if not os.getenv(name)]
-    if missing:
-        raise ValueError(
-            "Missing required environment variables: " + ", ".join(missing)
-        )
-
-    return {name: os.environ[name] for name in REQUIRED_ENV_VARS}
+def _require_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise ValueError(f"Missing required environment variable: {name}")
+    return value
 
 
-def run(config: dict[str, Any], secrets: dict[str, str]) -> None:
+def load_device_flow_settings() -> dict[str, Any]:
+    return {
+        "tenant_id": _require_env("TENANT_ID"),
+        "client_id": _require_env("CLIENT_ID"),
+        "scopes": os.getenv("GRAPH_SCOPES", " ".join(DEFAULT_DELEGATED_SCOPES)).split(),
+        "cache_path": os.getenv("MSAL_CACHE_PATH", ".msal_token_cache.json"),
+    }
+
+
+def load_confidential_flow_settings() -> dict[str, Any]:
+    return {
+        "tenant_id": _require_env("TENANT_ID"),
+        "client_id": _require_env("CLIENT_ID"),
+        "private_key_path": _require_env("CERT_PRIVATE_KEY_PATH"),
+        "cert_path": _require_env("CERT_PUBLIC_PATH"),
+        "thumbprint": _require_env("CERT_THUMBPRINT"),
+        "passphrase": os.getenv("CERT_PASSPHRASE"),
+        "scope": os.getenv("GRAPH_APP_SCOPE", DEFAULT_GRAPH_SCOPE),
+        "cache_path": os.getenv("MSAL_CACHE_PATH", ".msal_token_cache.json"),
+    }
+
+
+def run(config: dict[str, Any], token: str, auth_mode: str) -> None:
     """Primary script workflow.
 
     Replace this implementation with your inventory logic.
@@ -61,23 +73,42 @@ def run(config: dict[str, Any], secrets: dict[str, str]) -> None:
     for key in REQUIRED_CONFIG_FIELDS:
         print(f"- {key}: {config[key]}")
 
-    print("Loaded sensitive settings from environment:")
-    for key in REQUIRED_ENV_VARS:
-        masked = "***" if key == "CERTIFICATE_SECRET" else secrets[key]
-        print(f"- {key}: {masked}")
+    print(f"Authentication mode: {auth_mode}")
+    print(f"Access token acquired (first 16 chars): {token[:16]}...")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Run inventory analysis with a YAML config file."
+        description="Run inventory analysis with YAML config and Azure AD authentication."
     )
     parser.add_argument(
         "--config",
         required=True,
         help="Path to YAML config file (e.g., config.yaml)",
     )
+    parser.add_argument(
+        "--auth-mode",
+        choices=("device", "confidential"),
+        default="device",
+        help="Authentication mode: 'device' (default) or 'confidential'.",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
-    sensitive_settings = load_sensitive_settings()
-    run(config, sensitive_settings)
+
+    if args.auth_mode == "device":
+        auth_settings = load_device_flow_settings()
+        provider = build_provider_from_env(cache_path=auth_settings["cache_path"])
+        token = provider.acquire_token_device_flow(scopes=auth_settings["scopes"])
+    else:
+        auth_settings = load_confidential_flow_settings()
+        provider = build_provider_from_env(cache_path=auth_settings["cache_path"])
+        token = provider.acquire_token_confidential(
+            private_key_path=auth_settings["private_key_path"],
+            cert_path=auth_settings["cert_path"],
+            thumbprint=auth_settings["thumbprint"],
+            passphrase=auth_settings["passphrase"],
+            scope=auth_settings["scope"],
+        )
+
+    run(config=config, token=token, auth_mode=args.auth_mode)
