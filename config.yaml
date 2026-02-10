@@ -2,5 +2,5 @@
 site_url: "https://contoso.sharepoint.com/sites/inventory"
 library_name: "Shared Documents"
 folder_path: "/Reports"
-file_pattern: "*.csv"
+file_pattern: "^(\d{4}-\d{2}-\d{2})_Raw_Data\.xlsx$"
 output_file: "inventory_summary.csv"
